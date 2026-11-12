@@ -15,6 +15,16 @@ Both modes find the mouth automatically with on-device face landmarks (MediaPipe
 
 Run `npm start` and open http://localhost:8080 (opening `index.html` directly from disk does not work, because the app uses JavaScript modules). The live camera needs HTTPS or localhost and user permission; if it is unavailable, "Take selfie" falls back to the device's own camera/photo picker. Fonts (DM Sans and Manrope, SIL Open Font License) are bundled in `fonts/`, so the app makes no third-party network requests. The app does not upload the selfie; the preview clears after two hours or when leaving the page.
 
+## Web version (free patient app)
+
+The app is published to GitHub Pages over HTTPS by `.github/workflows/pages.yml` on every push to `main`:
+https://cluchs.github.io/BraceyMcFacey/
+
+- One-time setup: repository **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+- Patients can open it from a link or QR code, and use "Add to Home Screen" to keep it like an app.
+- During testing the page asks search engines not to index it (`<meta name="robots" content="noindex">` in `index.html`); remove that line at launch.
+- The first visit downloads about 19 MB (mostly the on-device face model); later visits use the browser cache.
+
 ## Native iOS and Android setup
 
 The repository includes Capacitor configuration for producing native iOS and Android shells around the same app.
