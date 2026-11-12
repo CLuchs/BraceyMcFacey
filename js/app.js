@@ -26,6 +26,7 @@ const state = {
   before: false,
   picked: false,   // recolor mode: has the person chosen a new color for this photo yet?
   tool: 'match',
+  fixOpen: false,  // is the "Fix bands" / "Adjust braces" panel open?
   offset: 0,
   token: 0,        // guards against out-of-order async photo processing
 };
@@ -42,18 +43,34 @@ const privacyAccepted = () => {
   showToast('Please read and accept the privacy note first.'); return false;
 };
 
+// The swatch strip under the photo. Built once; later calls only move the highlight and scroll
+// the selected swatch into the middle of the strip.
 function renderPalette() {
-  const root = $('palette'); root.innerHTML = '';
-  for (const color of colors) {
-    const button = document.createElement('button');
-    const on = state.color.name === color.name && (state.mode === 'new' || state.picked);
-    button.type = 'button'; button.className = 'color' + (on ? ' selected' : '');
-    button.setAttribute('aria-pressed', String(on));
-    button.setAttribute('aria-label', `Try ${color.name}`);
-    button.innerHTML = `<span class="chip" style="background:${color.hex}"></span><span class="color-name">${color.name}</span>`;
-    button.addEventListener('click', () => selectColor(color));
-    root.append(button);
+  const root = $('palette');
+  if (!root.children.length) {
+    for (const color of colors) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'color'; button.dataset.name = color.name;
+      button.setAttribute('aria-label', `Try ${color.name}`);
+      button.innerHTML = `<span class="chip" style="background:${color.hex}"></span><span class="color-name">${color.name}</span>`;
+      button.addEventListener('click', () => selectColor(color));
+      root.append(button);
+    }
   }
+  const shown = state.mode === 'new' || state.picked;
+  for (const button of root.children) {
+    const on = shown && button.dataset.name === state.color.name;
+    button.classList.toggle('selected', on);
+    button.setAttribute('aria-pressed', String(on));
+    if (on) root.scrollTo({ left: button.offsetLeft - root.offsetLeft - (root.clientWidth - button.offsetWidth) / 2, behavior: 'smooth' });
+  }
+}
+
+// Swipe or arrow: next/previous color in chart order (wrapping around).
+function stepColor(dir) {
+  const shown = state.mode === 'new' || state.picked;
+  const i = shown ? colors.indexOf(state.color) : (dir > 0 ? -1 : 0);
+  selectColor(colors[(i + dir + colors.length) % colors.length]);
 }
 
 function selectColor(color) {
@@ -136,7 +153,7 @@ function setPhoto(canvas, kind, geom) {
     region: null, stats: null, refs: [], mask: null, edits: [], tol: DEFAULT_TOL,
     out: null, outKey: null, maskVersion: 0,
   };
-  state.photo = photo; state.before = false; state.picked = false; state.zoom = true; state.offset = 0;
+  state.photo = photo; state.before = false; state.picked = false; state.zoom = true; state.offset = 0; state.fixOpen = false;
   $('position').value = '0';
   if (geom) {
     photo.region = buildRegion(photo.base.data, photo.W, photo.H, geom);
@@ -163,7 +180,7 @@ function analyze() {
     return;
   }
   if (p.geom.cutOff > 0.2) {
-    p.maskVersion++; state.tool = 'add';
+    p.maskVersion++; state.tool = 'add'; state.fixOpen = true;
     setStatus('Part of your face is outside the photo, so we can’t outline your smile reliably. For the best preview, retake it with your whole face in the frame — or tap each band to mark it.');
     return;
   }
@@ -171,9 +188,10 @@ function analyze() {
   if (found) { p.refs = found.refs; p.mask = found.mask; p.strict = true; }
   p.maskVersion++;
   state.tool = 'match';
-  if (p.mask) setStatus(`${p.kind === 'sample' ? 'This sample has blue bands. ' : ''}We found your current bands. Tap a color to try it. Missed a band? Use the tools below.`);
+  state.fixOpen = !p.mask && p.geom.openness >= 0.1;
+  if (p.mask) setStatus(`${p.kind === 'sample' ? 'This sample has blue bands. ' : ''}We found your current bands. Tap a color, or swipe the photo. Missed a band? Use “Fix bands”.`);
   else if (p.geom.openness < 0.1) setStatus('Your teeth aren’t showing much. Smile wide so your braces show, then retake the photo.');
-  else setStatus('We couldn’t spot your bands automatically. Tap “Match color”, then tap one of your bands. For clear, white, gray or black bands, use “Add band” and tap each one.');
+  else setStatus('We couldn’t spot your bands automatically. Tap “Match color”, then one of your bands — or for clear, white, gray or black bands, tap “Add band” and then each bracket.');
 }
 
 function newModeStatus() {
@@ -236,8 +254,12 @@ function render() {
     const geom = p.geom ?? fallbackGeometry(p.W, p.H);
     drawArch(ctx, bracePositions(geom, state.offset), state.color.hex, p.geom ? geom.inner : null);
   }
-  const label = state.mode === 'have' && (state.before || !state.picked) ? 'Your current bands' : `${state.color.name} ${state.mode === 'have' ? 'bands' : 'braces'} preview`;
+  const current = state.mode === 'have' && (state.before || !state.picked);
+  const label = current ? 'Your current bands' : `${state.color.name} ${state.mode === 'have' ? 'bands' : 'braces'} preview`;
   $('caption').textContent = label;
+  $('badge-name').textContent = current ? 'Your current bands' : state.color.name;
+  $('badge-dot').classList.toggle('none', current);
+  $('badge-dot').style.background = state.color.hex;
   view.setAttribute('aria-label', label);
 }
 
@@ -248,9 +270,14 @@ function updateControls() {
     ? 'We’ll find the bands on your braces and show them in a new color.'
     : 'We’ll add virtual braces to your smile.';
   const canEdit = have && p && p.region;
+  const canFix = have ? Boolean(canEdit) : Boolean(p);
+  if (!canFix) state.fixOpen = false;
+  $('fix-toggle').classList.toggle('hidden', !canFix);
+  $('fix-toggle').textContent = (have ? 'Fix bands' : 'Adjust braces') + (state.fixOpen ? ' ▴' : ' ▾');
+  $('fix-toggle').setAttribute('aria-expanded', String(state.fixOpen));
+  $('tools-card').classList.toggle('hidden', !state.fixOpen);
   $('recolor-tools').classList.toggle('hidden', !canEdit);
   $('position-tools').classList.toggle('hidden', have);
-  $('tools-card').classList.toggle('hidden', have && !canEdit);
   $('zoom').classList.toggle('hidden', !(p && p.geom));
   $('zoom').textContent = state.zoom ? 'Show full photo' : 'Zoom to smile';
   $('compare').classList.toggle('hidden', !(canEdit && state.picked));
@@ -258,7 +285,7 @@ function updateControls() {
   $('compare').textContent = state.before ? 'Show new color' : 'Show current color';
   for (const b of document.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === state.tool));
   $('undo').disabled = !(p && p.edits.length);
-  stage.classList.toggle('tappable', Boolean(canEdit) && !state.before);
+  stage.classList.toggle('tappable', Boolean(canEdit) && state.fixOpen && !state.before);
 }
 
 // ---------- recolor-mode taps ----------
@@ -294,12 +321,24 @@ function handleTap(x, y) {
   renderPalette(); updateControls(); render();
 }
 
+// On the photo: a sideways swipe changes color; a tap (with "Fix bands" open) edits the bands.
+let pointerStart = null;
 view.addEventListener('pointerdown', event => {
+  if (stage.classList.contains('video-on') || !state.photo) return;
+  pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+});
+view.addEventListener('pointerup', event => {
+  const start = pointerStart; pointerStart = null;
+  if (!start || start.id !== event.pointerId) return;
+  const dx = event.clientX - start.x, dy = event.clientY - start.y;
+  if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) { stepColor(dx < 0 ? 1 : -1); return; }
+  if (Math.hypot(dx, dy) > 12) return;
   const p = state.photo;
-  if (state.mode !== 'have' || !p?.region || state.before || stage.classList.contains('video-on')) return;
+  if (state.mode !== 'have' || !p?.region || state.before || !state.fixOpen) return;
   const [x, y] = toImagePoint(event);
   handleTap(x, y);
 });
+view.addEventListener('pointercancel', () => { pointerStart = null; });
 
 // ---------- camera ----------
 function stopCamera() {
@@ -380,6 +419,14 @@ $('undo').addEventListener('click', () => { state.photo?.edits.pop(); updateCont
 $('reset').addEventListener('click', () => { analyze(); updateControls(); render(); });
 $('compare').addEventListener('click', () => { state.before = !state.before; updateControls(); render(); });
 $('zoom').addEventListener('click', () => { state.zoom = !state.zoom; updateControls(); render(); });
+$('fix-toggle').addEventListener('click', () => { state.fixOpen = !state.fixOpen; updateControls(); });
+$('prev-color').addEventListener('click', () => stepColor(-1));
+$('next-color').addEventListener('click', () => stepColor(1));
+document.addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key) || event.target.closest('input, textarea, select')) return;
+  if (!$('privacy-modal').classList.contains('hidden') || stage.classList.contains('video-on')) return;
+  stepColor(event.key === 'ArrowRight' ? 1 : -1);
+});
 $('tolerance').addEventListener('change', event => {
   const p = state.photo;
   if (!p?.region || !p.refs.length) return;

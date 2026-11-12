@@ -7,6 +7,8 @@ Two modes, chosen with "Do you already have braces?":
 - **Yes, change my colors** (returning patients): the app finds the colored bands on your current braces and repaints them in the new color, keeping the photo's shading. Tools let you fix the outline: *Match color* (tap one of your bands), *Add band*, *Remove*, *Undo*, plus a color-match slider. *Show current color* toggles before/after.
 - **Not yet, add braces** (new patients): virtual brackets and wire are drawn along your upper teeth.
 
+The selfie fills the screen with the color name shown on it. Tap a swatch in the strip under the photo, or swipe the photo left/right (arrow buttons and keyboard arrows on computers) to step through the colors in chart order. Fix tools and the braces-position slider sit behind a "Fix bands" / "Adjust braces" button and open by themselves when automatic detection needs help.
+
 Both modes find the mouth automatically with on-device face landmarks (MediaPipe Face Landmarker, bundled in `vendor/mediapipe/`).
 
 ## Run in a browser
