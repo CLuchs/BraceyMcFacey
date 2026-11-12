@@ -4,6 +4,7 @@
   "private": true,
   "description": "Braces color try-on app for iOS, Android, and web.",
   "scripts": {
+    "start": "node scripts/serve.js",
     "build": "node scripts/prepare-web.js",
     "cap:sync": "npm run build && cap sync",
     "cap:ios": "cap open ios",

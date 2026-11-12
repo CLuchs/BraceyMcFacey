@@ -1,10 +1,29 @@
 # Bracey McFacey
 
-A braces-color try-on app. Take or upload one selfie, then browse the standard brace-color palette and preview each color with a virtual braces overlay.
+A braces-color try-on app. Take or upload one selfie, then browse the standard brace-color palette and preview each color on your smile.
+
+Two modes, chosen with "Do you already have braces?":
+
+- **Yes, change my colors** (returning patients): the app finds the colored bands on your current braces and repaints them in the new color, keeping the photo's shading. Tools let you fix the outline: *Match color* (tap one of your bands), *Add band*, *Remove*, *Undo*, plus a color-match slider. *Show current color* toggles before/after.
+- **Not yet, add braces** (new patients): virtual brackets and wire are drawn along your upper teeth.
+
+The selfie fills the screen with the color name shown on it. Tap a swatch in the strip under the photo, or swipe the photo left/right (arrow buttons and keyboard arrows on computers) to step through the colors in chart order. Fix tools and the braces-position slider sit behind a "Fix bands" / "Adjust braces" button and open by themselves when automatic detection needs help.
+
+Both modes find the mouth automatically with on-device face landmarks (MediaPipe Face Landmarker, bundled in `vendor/mediapipe/`).
 
 ## Run in a browser
 
-Open `index.html`. The live camera needs HTTPS or localhost and user permission; if it is unavailable, "Take selfie" falls back to the device's own camera/photo picker. Fonts (DM Sans and Manrope, SIL Open Font License) are bundled in `fonts/`, so the app makes no third-party network requests. The app does not upload the selfie; the preview clears after two hours or when leaving the page.
+Run `npm start` and open http://localhost:8080 (opening `index.html` directly from disk does not work, because the app uses JavaScript modules). The live camera needs HTTPS or localhost and user permission; if it is unavailable, "Take selfie" falls back to the device's own camera/photo picker. Fonts (DM Sans and Manrope, SIL Open Font License) are bundled in `fonts/`, so the app makes no third-party network requests. The app does not upload the selfie; the preview clears after two hours or when leaving the page.
+
+## Web version (free patient app)
+
+The app is published to GitHub Pages over HTTPS by `.github/workflows/pages.yml` on every push to `main`:
+https://cluchs.github.io/BraceyMcFacey/
+
+- One-time setup: repository **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+- Patients can open it from a link or QR code, and use "Add to Home Screen" to keep it like an app.
+- During testing the page asks search engines not to index it (`<meta name="robots" content="noindex">` in `index.html`); remove that line at launch.
+- The first visit downloads about 19 MB (mostly the on-device face model); later visits use the browser cache.
 
 ## Native iOS and Android setup
 
@@ -30,6 +49,15 @@ Keep the try-on flow calm and put any ads outside the selfie/camera task:
 Start with a direct sponsorship or clearly disclosed affiliate link rather than an ad SDK; it is simpler for a privacy-first app. If adding an ad network later, use age-appropriate, non-personalized ads and get legal/store-policy review, especially because orthodontic users may be minors. Do not send photos or facial data to an advertising provider. The app currently contains no ad code or tracking SDK.
 
 ## Privacy and limitations
+
+- Face detection runs on the device. The MediaPipe runtime tries to send anonymous usage statistics to Google; the page's Content-Security-Policy (`connect-src 'self'`) blocks that and every other outside request. Keep that policy when editing `index.html`.
+- Automatic band detection works best for clearly colored bands (blue, green, purple, teal). Clear, white, silver, gray and black bands blend in with teeth, metal and shadows, and pink/red bands can match the gums; for those the app asks the person to mark bands with *Add band*. It is tuned to prefer missing a band over coloring gums, lips or teeth.
+- *Add band* snaps to the nearest bracket and places a band around it, so taps don't have to be exact. This is how clear/ceramic braces are recolored.
+- Elastics (rubber bands between the jaws) are left alone.
+- The app works best with the whole face in the photo. When much of the face is cut off, it still tries (with an added margin) but skips automatic detection and asks the person to tap each band or retake the photo.
+- To check detection on more photos: put them in `test-photos/` (git-ignored) and run `node scripts/eval-bands.js test-photos eval-out` while `npm start` is running.
+- Small or distant photos give rough results; a close, well-lit smile works best. Only upper-arch brackets are drawn in new-patient mode.
+- Under this security policy, WebAssembly (used by face detection) needs iOS 16 or later and a current Android System WebView; on older devices the app still works but without automatic mouth detection.
 
 - A simple acknowledgment explains that colors and placement are estimates and photos clear after two hours.
 - Selfies are held in page memory, not uploaded or saved to an account. Leaving the page clears the selfie sooner; the in-page timer clears it after two hours if the page remains open.
