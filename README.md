@@ -4,7 +4,7 @@ A braces-color try-on app. Take or upload one selfie, then browse the standard b
 
 ## Run in a browser
 
-Open `index.html`. Camera access needs HTTPS or localhost and user permission. The app does not upload the selfie; the preview clears after two hours or when leaving the page.
+Open `index.html`. The live camera needs HTTPS or localhost and user permission; if it is unavailable, "Take selfie" falls back to the device's own camera/photo picker. Fonts (DM Sans and Manrope, SIL Open Font License) are bundled in `fonts/`, so the app makes no third-party network requests. The app does not upload the selfie; the preview clears after two hours or when leaving the page.
 
 ## Native iOS and Android setup
 
