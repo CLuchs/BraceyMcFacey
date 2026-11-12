@@ -12,5 +12,7 @@ if (!fs.existsSync(source)) {
 
 fs.mkdirSync(outputDir, { recursive: true });
 fs.copyFileSync(source, path.join(outputDir, 'index.html'));
-fs.cpSync(path.join(root, 'fonts'), path.join(outputDir, 'fonts'), { recursive: true });
-console.log('Prepared www/ (index.html and fonts) for Capacitor.');
+for (const dir of ['fonts', 'js', 'vendor']) {
+  fs.cpSync(path.join(root, dir), path.join(outputDir, dir), { recursive: true });
+}
+console.log('Prepared www/ (index.html, fonts, js, vendor) for Capacitor.');
