@@ -1,0 +1,6 @@
+{
+  "appId": "com.braceymcfacey.app",
+  "appName": "Bracey McFacey",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
