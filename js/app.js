@@ -1,4 +1,4 @@
-import { hexToLab, buildRegion, regionStats, detectBands, matchMask, composeAlpha, recolor, sampleLab, isInside, isNeutral, isConfusable, drawArch } from './braces.js';
+import { hexToLab, buildRegion, regionStats, detectBands, matchMask, composeAlpha, recolor, sampleLab, isInside, isNeutral, isConfusable, growBand, drawArch } from './braces.js';
 import { geometryFromLandmarks, fallbackGeometry, sampleGeometry, bracePositions } from './geometry.js';
 import { preloadFaceFinder, findLandmarks } from './face.js';
 
@@ -162,6 +162,11 @@ function analyze() {
     setStatus('We couldn’t find a smile in this photo. Try a closer, well-lit photo with your teeth and braces showing.');
     return;
   }
+  if (p.geom.cutOff > 0.2) {
+    p.maskVersion++; state.tool = 'add';
+    setStatus('Part of your face is outside the photo, so we can’t outline your smile reliably. For the best preview, retake it with your whole face in the frame — or tap each band to mark it.');
+    return;
+  }
   const found = detectBands(p.region, p.stats, p.tol / DEFAULT_TOL);
   if (found) { p.refs = found.refs; p.mask = found.mask; p.strict = true; }
   p.maskVersion++;
@@ -176,6 +181,7 @@ function newModeStatus() {
   if (!p) return '';
   if (p.kind === 'sample') return 'Using the sample smile. Take a selfie whenever you are ready.';
   if (!p.geom) return 'We couldn’t find a smile, so the braces are in a rough spot. Use the slider to line them up.';
+  if (p.geom.cutOff > 0.2) return 'Part of your face is outside the photo, so the braces may be off. Retake it with your whole face in the frame for the best preview.';
   return 'Selfie ready. Pick a color, and use the slider if the braces need nudging.';
 }
 
@@ -201,7 +207,7 @@ function viewRect() {
   const p = state.photo, cw = view.width, ch = view.height, asp = cw / ch;
   let w, h, cx, cy;
   if (state.zoom && p.geom) {
-    w = Math.min(p.W, p.geom.width * (state.mode === 'have' ? 1.5 : 2.6)); h = w / asp;
+    w = Math.min(p.W, p.geom.width * (state.mode === 'have' ? 1.15 : 2.6)); h = w / asp;
     if (h > p.H) { h = p.H; w = h * asp; }
     [cx, cy] = p.geom.center;
   } else {
@@ -281,7 +287,8 @@ function handleTap(x, y) {
     p.refs = [ref]; p.mask = mask; p.strict = false; p.maskVersion++;
     setStatus(count ? 'Matched your band color. Missed or extra spots? Use Add band or Remove.' : 'No bands matched that color. Try a looser match, or use Add band.');
   } else {
-    p.edits.push({ type: state.tool === 'add' ? 'add' : 'remove', x, y, r: region.mouthW * 0.05 });
+    if (state.tool === 'add') p.edits.push({ type: 'add', pixels: growBand(region, p.stats, x, y) });
+    else p.edits.push({ type: 'remove', x, y, r: region.mouthW * 0.04 });
   }
   state.before = false; state.picked = true;
   renderPalette(); updateControls(); render();

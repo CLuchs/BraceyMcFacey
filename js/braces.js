@@ -89,7 +89,7 @@ export function buildRegion(data, W, H, geom) {
   }
   // core: the mouth opening itself, used for automatic detection (keeps lip-edge pixels out).
   // inside: slightly larger, used for manual taps and recoloring.
-  return { x0, y0, w, h, inside, core: innerRaw, lip, L, A, B, mouthW: geom.width };
+  return { x0, y0, w, h, inside, core: innerRaw, lip, L, A, B, mouthW: geom.width, angle: geom.angle };
 }
 
 const median = arr => { if (!arr.length) return 0; const s = Float32Array.from(arr).sort(); return s[s.length >> 1]; };
@@ -120,31 +120,33 @@ const HUE_BINS = 24;
 const hueBin = (a, b) => { const h = Math.atan2(b, a); return ((Math.floor(((h + Math.PI) / (2 * Math.PI)) * HUE_BINS) % HUE_BINS) + HUE_BINS) % HUE_BINS; };
 const binDist = (p, q) => { const d = Math.abs(p - q) % HUE_BINS; return Math.min(d, HUE_BINS - d); };
 
-// Lips, gums and skin share a band of red-orange hues. A pixel in that hue range only counts as a
-// possible band when it is clearly more saturated than the lips.
-const SKIN_SECTOR = Math.PI * 35 / 180;
-function looksLikeGum(st, a, b) {
-  const lipHue = st.lip ? Math.atan2(st.lip.b, st.lip.a) : 0.55, lipC = st.lip ? Math.hypot(st.lip.a, st.lip.b) : 25;
-  let d = Math.abs(Math.atan2(b, a) - lipHue);
-  if (d > Math.PI) d = 2 * Math.PI - d;
-  return d < SKIN_SECTOR && Math.hypot(a, b) < lipC * 1.3 + 6;
+// Lips, gums, skin, teeth and elastics (the rubber bands between the jaws) all sit in one warm
+// arc of hues, from the lips' red to the teeth's yellow. A pixel in that arc only counts as a
+// possible band when it is much more saturated than lips and teeth; real red, orange, yellow
+// and gold bands are, while gums and beige elastics are not.
+const hueOf = (a, b) => Math.atan2(b, a);
+const hueGap = (h1, h2) => { let d = Math.abs(h1 - h2) % (2 * Math.PI); return d > Math.PI ? 2 * Math.PI - d : d; };
+const DEG = Math.PI / 180;
+function warmArc(st) {
+  if (st.warm) return st.warm;
+  const lipHue = st.lip ? hueOf(st.lip.a, st.lip.b) : 30 * DEG, lipC = st.lip ? Math.hypot(st.lip.a, st.lip.b) : 25;
+  const tC = Math.hypot(st.teeth.a, st.teeth.b), teethHue = tC >= 4 ? hueOf(st.teeth.a, st.teeth.b) : 85 * DEG;
+  // The arc runs from the lip hue to the teeth hue (the short way round), widened by 25 degrees each side.
+  let from = lipHue, to = teethHue;
+  if (((to - from) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) > Math.PI) [from, to] = [to, from];
+  st.warm = { from: from - 25 * DEG, span: hueGap(from, to) + 50 * DEG, minC: Math.max(30, lipC * 1.3 + 6, tC * 1.5 + 22) };
+  return st.warm;
 }
-
-// Stained or warm-toned teeth look like pale yellow. A pixel near the teeth's own hue only counts
-// as a possible band when it is much more saturated than the teeth.
-function looksLikeTooth(st, a, b) {
-  const tC = Math.hypot(st.teeth.a, st.teeth.b), C = Math.hypot(a, b);
-  if (Math.hypot(a - st.teeth.a, b - st.teeth.b) < 11) return true;
-  if (tC < 4) return false;
-  let d = Math.abs(Math.atan2(b, a) - Math.atan2(st.teeth.b, st.teeth.a));
-  if (d > Math.PI) d = 2 * Math.PI - d;
-  return d < Math.PI / 6 && C < tC * 1.5 + 22;
+function looksWarmAndDull(st, a, b) {
+  const w = warmArc(st), off = ((hueOf(a, b) - w.from) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+  return off <= w.span && Math.hypot(a, b) < w.minC;
 }
+const looksLikeTooth = (st, a, b) => Math.hypot(a - st.teeth.a, b - st.teeth.b) < 11;
 
 // A pixel that is clearly not teeth, lips/gums, bare metal or shadow.
 function isColorful(r, st, i) {
   const L = r.L[i], a = r.A[i], b = r.B[i];
-  if (L < 20 || Math.hypot(a, b) < 8 || looksLikeGum(st, a, b)) return false;
+  if (L < 20 || Math.hypot(a, b) < 8 || looksWarmAndDull(st, a, b)) return false;
   if (looksLikeTooth(st, a, b)) return false;
   if (st.lip && dist(L, a, b, st.lip) < 12) return false;
   if (st.dark && dist(L, a, b, st.dark) < 10) return false;
@@ -184,7 +186,7 @@ export function autoDetectRefs(r, st) {
 export const isNeutral = ref => Math.hypot(ref.a, ref.b) < 8;
 
 // A tapped band color too close to gums, lips or teeth to match safely by color.
-export const isConfusable = (st, ref) => looksLikeGum(st, ref.a, ref.b) || looksLikeTooth(st, ref.a, ref.b);
+export const isConfusable = (st, ref) => looksWarmAndDull(st, ref.a, ref.b) || looksLikeTooth(st, ref.a, ref.b);
 
 // Average Lab color in a small disc around (x, y) in image coordinates.
 export function sampleLab(r, x, y, radius) {
@@ -217,7 +219,7 @@ export function matchMask(r, refs, st, scale = 1, strict = false) {
     for (const ref of refs) best = Math.min(best, dist(L, a, b, ref));
     if (best >= tol) continue;
     if (best >= dist(L, a, b, st.teeth) || best >= Math.hypot(a, b) * 1.1) continue;
-    if (strict && (looksLikeGum(st, a, b) || looksLikeTooth(st, a, b))) continue;
+    if (strict && (looksWarmAndDull(st, a, b) || looksLikeTooth(st, a, b))) continue;
     if (st.lip && best >= dist(L, a, b, st.lip)) continue;
     if (st.dark && best >= dist(L, a, b, st.dark)) continue;
     m[i] = 1;
@@ -285,18 +287,85 @@ export function detectBands(r, st, scale = 1) {
   return { refs, strict: true, ...matchMask(r, refs, st, scale, true) };
 }
 
-// Combines the automatic mask with the person's taps. "add" paints a band-shaped ring
-// (leaving the metal bracket in the middle alone); "remove" clears a disc.
+// "Add band" for one tapped bracket: grows outward from the tap over pixels of the tapped color
+// (a clear band on a ceramic bracket, or a colored band the detector missed), stopping at teeth,
+// wire, elastics and lips, then keeps the outer part of that shape: the band around the bracket.
+// Returns region pixel indices.
+export function growBand(r, st, x, y) {
+  const { w, h } = r, maxR = r.mouthW * 0.035, tol = 10;
+  const tx = x - r.x0, ty = y - r.y0;
+  // The surroundings (mostly tooth enamel) as a local "not a band" color: median of a wider window.
+  const around = { L: [], a: [], b: [] }, Rw = r.mouthW * 0.05;
+  for (let j = Math.floor(ty - Rw); j <= ty + Rw; j++) for (let i = Math.floor(tx - Rw); i <= tx + Rw; i++) {
+    if (i < 0 || j < 0 || i >= w || j >= h || !r.inside[j * w + i]) continue;
+    const p = j * w + i; around.L.push(r.L[p]); around.a.push(r.A[p]); around.b.push(r.B[p]);
+  }
+  const local = { L: median(around.L), a: median(around.a), b: median(around.b) };
+  // Snap the tap to the nearby pixel that stands out most from its surroundings (the bracket and
+  // band rather than the tooth), skipping dark gray wire and gaps.
+  let cx = tx, cy = ty, bestScore = -1;
+  const Rs = r.mouthW * 0.025;
+  for (let j = Math.floor(ty - Rs); j <= ty + Rs; j++) for (let i = Math.floor(tx - Rs); i <= tx + Rs; i++) {
+    if (i < 0 || j < 0 || i >= w || j >= h || Math.hypot(i - tx, j - ty) > Rs) continue;
+    const p = j * w + i;
+    if (!r.inside[p] || r.L[p] < 25 || (Math.hypot(r.A[p], r.B[p]) < 6 && r.L[p] < local.L - 12)) continue;
+    const score = dist(r.L[p], r.A[p], r.B[p], local) - Math.hypot(i - tx, j - ty) * 0.15;
+    if (score > bestScore) { bestScore = score; cx = i + 0.5; cy = j + 0.5; }
+  }
+  const seed = sampleLab(r, cx + r.x0, cy + r.y0, Math.max(1.5, r.mouthW * 0.004));
+  const ok = i => {
+    if (!r.inside[i]) return false;
+    const d = dist(r.L[i], r.A[i], r.B[i], seed);
+    return d < tol && d < dist(r.L[i], r.A[i], r.B[i], local) && (!st.lip || d < dist(r.L[i], r.A[i], r.B[i], st.lip));
+  };
+  const seen = new Uint8Array(w * h), blob = [], stack = [];
+  // Start from every matching pixel close to the tap (the exact tap may land on the wire).
+  for (let j = Math.floor(cy - 3); j <= cy + 3; j++) for (let i = Math.floor(cx - 3); i <= cx + 3; i++) {
+    if (i < 0 || j < 0 || i >= w || j >= h) continue;
+    const p = j * w + i;
+    if (ok(p)) { seen[p] = 1; stack.push(p); }
+  }
+  while (stack.length) {
+    const p = stack.pop(), i = p % w, j = (p - i) / w;
+    blob.push(p);
+    for (const q of [p - 1, p + 1, p - w, p + w]) {
+      const qi = q % w, qj = (q - qi) / w;
+      if (q < 0 || q >= w * h || seen[q] || Math.abs(qi - i) > 1 || Math.hypot(qi + 0.5 - cx, qj + 0.5 - cy) > maxR) continue;
+      seen[q] = 1;
+      if (ok(q)) stack.push(q);
+    }
+  }
+  // Center and size of the tapped bracket from the grown shape (or the snapped tap if the shape
+  // is unclear), then a band: a rounded-square ring around it, turned with the smile.
+  let bx = cx, by = cy, size = r.mouthW * 0.055;
+  if (blob.length >= Math.max(12, (r.mouthW * 0.012) ** 2)) {
+    let sx = 0, sy = 0;
+    for (const p of blob) { const i = p % w; sx += i + 0.5; sy += (p - i) / w + 0.5; }
+    bx = sx / blob.length; by = sy / blob.length;
+    size = Math.min(r.mouthW * 0.07, Math.max(r.mouthW * 0.04, 2 * Math.sqrt(blob.length / Math.PI)));
+  }
+  const half = size * 0.58, thick = size * 0.24, cos = Math.cos(r.angle), sin = Math.sin(r.angle), ring = [];
+  for (let j = Math.floor(by - half - 1); j <= by + half + 1; j++) for (let i = Math.floor(bx - half - 1); i <= bx + half + 1; i++) {
+    if (i < 0 || j < 0 || i >= w || j >= h || !r.inside[j * w + i]) continue;
+    const dx = i + 0.5 - bx, dy = j + 0.5 - by, u = dx * cos + dy * sin, v = -dx * sin + dy * cos;
+    const d = Math.sqrt(Math.sqrt(u ** 4 + v ** 4));
+    if (d <= half && d >= half - thick) ring.push(j * w + i);
+  }
+  return ring;
+}
+
+// Combines the automatic mask with the person's taps: "add" edits carry the pixels from
+// growBand(); "remove" clears a disc.
 export function composeAlpha(r, mask, edits) {
   const { w, h } = r, alpha = new Float32Array(w * h);
   for (let i = 0; i < mask.length; i++) alpha[i] = mask[i];
   for (const e of edits) {
-    const cx = e.x - r.x0, cy = e.y - r.y0, R = e.type === 'add' ? e.r : e.r * 1.15;
+    if (e.type === 'add') { for (const p of e.pixels) alpha[p] = 1; continue; }
+    const cx = e.x - r.x0, cy = e.y - r.y0, R = e.r;
     for (let j = Math.max(0, Math.floor(cy - R)); j <= Math.min(h - 1, Math.ceil(cy + R)); j++)
       for (let i = Math.max(0, Math.floor(cx - R)); i <= Math.min(w - 1, Math.ceil(cx + R)); i++) {
         const d = Math.hypot(i + 0.5 - cx, j + 0.5 - cy), idx = j * w + i;
-        if (e.type === 'add') { if (d <= R && d >= R * 0.42 && r.inside[idx]) alpha[idx] = 1; }
-        else if (d <= R) alpha[idx] = 0;
+        if (d <= R) alpha[idx] = 0;
       }
   }
   // Soften edges so the new color blends into the photo.

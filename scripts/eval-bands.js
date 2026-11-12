@@ -21,7 +21,7 @@ for(const f of files){
   if(!lm)return{face:false};
   const g=G.geometryFromLandmarks(lm,c.width,c.height);
   const d=ctx.getImageData(0,0,c.width,c.height);const reg=B.buildRegion(d.data,c.width,c.height,g);const st=B.regionStats(reg);
-  const cands=B.autoDetectRefs(reg,st);const found=B.detectBands(reg,st,1);
+  const cands=B.autoDetectRefs(reg,st);const found=g.cutOff>0.2?null:B.detectBands(reg,st,1); // the app skips cut-off faces
   // panels: crop around mouth
   const pad=g.width*0.35;const x0=Math.max(0,g.center[0]-g.width/2-pad),y0=Math.max(0,g.center[1]-g.width*0.45),w=Math.min(c.width-x0,g.width+2*pad),h=Math.min(c.height-y0,g.width*0.9);
   const PW=360,PH=Math.round(PW*h/w);const sheet=document.createElement('canvas');sheet.width=PW*3;sheet.height=PH;const sx=sheet.getContext('2d');
@@ -37,7 +37,7 @@ for(const f of files){
   const oc=document.createElement('canvas');oc.width=c.width;oc.height=c.height;oc.getContext('2d').putImageData(o,0,0);
   sx.drawImage(oc,x0,y0,w,h,PW*2,0,PW,PH);
   const r1=v=>Math.round(v);
-  return{face:true,W:c.width,mouthW:r1(g.width),open:+g.openness.toFixed(2),lip:st.lip&&[st.lip.L,st.lip.a,st.lip.b].map(r1),teeth:[st.teeth.L,st.teeth.a,st.teeth.b].map(r1),
+  return{face:true,cutOff:+g.cutOff.toFixed(2),W:c.width,mouthW:r1(g.width),open:+g.openness.toFixed(2),lip:st.lip&&[st.lip.L,st.lip.a,st.lip.b].map(r1),teeth:[st.teeth.L,st.teeth.a,st.teeth.b].map(r1),
    cands:cands.map(q=>[q.L,q.a,q.b].map(r1)),refs:found?found.refs.map(q=>[q.L,q.a,q.b].map(r1)):null,count:found?found.count:0,png:sheet.toDataURL('image/png')}
  },[data,target]);
  if(r.png){fs.writeFileSync(path.join(out,f.replace(/\.\w+$/,'.png')),Buffer.from(r.png.split(',')[1],'base64'));delete r.png}

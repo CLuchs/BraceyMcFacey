@@ -47,7 +47,11 @@ export function makeGeometry(upIn, loIn, upOut, loOut, known = true) {
 
 export function geometryFromLandmarks(lm, W, H) {
   const P = i => [lm[i].x * W, lm[i].y * H];
-  return makeGeometry(LIP.upperInner.map(P), LIP.lowerInner.map(P), LIP.upperOuter.map(P), LIP.lowerOuter.map(P));
+  const g = makeGeometry(LIP.upperInner.map(P), LIP.lowerInner.map(P), LIP.upperOuter.map(P), LIP.lowerOuter.map(P));
+  // Share of face landmarks outside the photo. When much of the face is cut off, the detector
+  // has to guess and the mouth outline becomes unreliable.
+  g.cutOff = lm.filter(q => q.x < 0 || q.x > 1 || q.y < 0 || q.y > 1).length / lm.length;
+  return g;
 }
 
 // Where to draw brackets on the upper teeth. offset (-12..12) nudges them up or down.

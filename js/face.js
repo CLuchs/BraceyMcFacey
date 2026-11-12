@@ -19,8 +19,24 @@ export function preloadFaceFinder() {
   return landmarkerPromise;
 }
 
-// Returns the 478 normalized landmarks of the first face, or null when no face is found.
+// Returns the 478 landmarks of the first face, normalized to the given canvas (values outside
+// 0..1 mean that part of the face is outside the photo), or null when no face is found.
+// When the face runs off the edge of the photo, the detector often misses it; adding an empty
+// margin around the photo gives it room, so we retry that way.
 export async function findLandmarks(canvas) {
   const landmarker = await preloadFaceFinder();
-  return landmarker.detect(canvas).faceLandmarks?.[0] ?? null;
+  const direct = landmarker.detect(canvas).faceLandmarks?.[0];
+  if (direct) return direct;
+  for (const pad of [0.3, 0.15]) {
+    const px = Math.round(canvas.width * pad), py = Math.round(canvas.height * pad);
+    const padded = document.createElement('canvas');
+    padded.width = canvas.width + 2 * px; padded.height = canvas.height + 2 * py;
+    const ctx = padded.getContext('2d');
+    ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, padded.width, padded.height);
+    ctx.drawImage(canvas, px, py);
+    const lm = landmarker.detect(padded).faceLandmarks?.[0];
+    padded.width = 0;
+    if (lm) return lm.map(q => ({ ...q, x: (q.x * (canvas.width + 2 * px) - px) / canvas.width, y: (q.y * (canvas.height + 2 * py) - py) / canvas.height }));
+  }
+  return null;
 }
