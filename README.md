@@ -1,19 +1,14 @@
 # Bracey McFacey
 
-A privacy-first browser app to try braces colors on a sample smile or a selfie, scan an orthodontist's color chart, and browse the colors in their order of appearance in the chart photo.
+A small browser-based braces color try-on. Take or upload one selfie, then tap through the standard color chart in the order shown in the image provided by the user. The selected color appears as a virtual braces overlay on the photo.
 
 ## Run
 
-Open `index.html` in a browser. Camera access requires HTTPS or `localhost` and camera permission. Image upload works without camera access.
-
-## How it works
-
-1. Start with a selfie (camera or upload) or use the sample smile.
-2. Take or upload a photo of the orthodontist's color chart. The app estimates colorful swatches on-device and lists them in approximate reading order (left to right, then top to bottom). The user can compare the detected shades and order with the physical chart.
-3. Tap any displayed color to preview it on the smile. No colors are ranked or labeled as suggested.
+Open `index.html` in a browser. Camera access requires HTTPS or `localhost` and camera permission. You can also use the device's photo picker to take or upload a selfie.
 
 ## Privacy and limitations
 
-- Selfies and color chart photos stay in the browser; this static app has no server and does not upload or persist photos.
-- Chart color extraction is a basic pixel-color estimate and cannot reliably identify chart layout, names, or exact swatches. Use a clear, straight-on photo and verify the resulting sequence against the physical chart.
-- The braces overlay is a visual approximation, not a clinical treatment simulation. Confirm available colors and choices with your orthodontist.
+- A short acknowledgment explains that colors and placement are estimates and photos are cleared after two hours.
+- Selfies are handled in page memory only. They are not uploaded or saved to an account, and the page clears the selfie after two hours while it remains open. Closing or navigating away from the page clears it sooner.
+- Standard chart colors and names are approximate values transcribed from the user-provided image. Screen colors, lighting, and the physical bands can differ.
+- The overlay is an AR-style visual preview with a manual position control; it does not track facial landmarks or simulate clinical treatment. Ask the orthodontist about exact colors and fit.
