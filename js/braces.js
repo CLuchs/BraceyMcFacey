@@ -87,61 +87,91 @@ export function buildRegion(data, W, H, geom) {
     L[idx] = lab[0]; A[idx] = lab[1]; B[idx] = lab[2];
     lip[idx] = outer[idx] && !innerRaw[idx] ? 1 : 0;
   }
-  return { x0, y0, w, h, inside, lip, L, A, B, mouthW: geom.width };
+  // core: the mouth opening itself, used for automatic detection (keeps lip-edge pixels out).
+  // inside: slightly larger, used for manual taps and recoloring.
+  return { x0, y0, w, h, inside, core: innerRaw, lip, L, A, B, mouthW: geom.width };
 }
 
 const median = arr => { if (!arr.length) return 0; const s = Float32Array.from(arr).sort(); return s[s.length >> 1]; };
 
 export function regionStats(r) {
-  const lipL = [], lipA = [], lipB = [], teeth = [];
+  const lipL = [], lipA = [], lipB = [], teeth = [], dark = [];
   for (let i = 0; i < r.L.length; i++) {
     if (r.lip[i]) { lipL.push(r.L[i]); lipA.push(r.A[i]); lipB.push(r.B[i]); }
-    else if (r.inside[i] && Math.hypot(r.A[i], r.B[i]) < 22) teeth.push(i);
+    else if (r.core[i] && r.L[i] < 30) dark.push(i);
+    else if (r.core[i] && Math.hypot(r.A[i], r.B[i]) < 22) teeth.push(i);
   }
   // Teeth: the brightest 40% of the low-color pixels inside the mouth.
   teeth.sort((p, q) => r.L[q] - r.L[p]);
   const top = teeth.slice(0, Math.max(1, Math.round(teeth.length * 0.4)));
   const lip = lipL.length ? { L: median(lipL), a: median(lipA), b: median(lipB) } : null;
   const teethRef = top.length ? { L: median(top.map(i => r.L[i])), a: median(top.map(i => r.A[i])), b: median(top.map(i => r.B[i])) } : { L: 80, a: 0, b: 8 };
-  return { lip, lipC: lip ? Math.hypot(lip.a, lip.b) : 0, teeth: teethRef, teethC: Math.hypot(teethRef.a, teethRef.b) };
+  // Dark inside of the mouth (shadows, tongue at the back), only if there is a fair amount of it.
+  const darkRef = dark.length > (r.mouthW * 0.05) ** 2 ? { L: median(dark.map(i => r.L[i])), a: median(dark.map(i => r.A[i])), b: median(dark.map(i => r.B[i])) } : null;
+  return { lip, teeth: teethRef, dark: darkRef };
 }
 
 // ---------- Band detection ----------
+// Colors are compared in Lab with lightness down-weighted: shading changes a band's lightness
+// far more than its hue.
+const dist = (L, a, b, ref) => Math.hypot((L - ref.L) * 0.4, a - ref.a, b - ref.b);
+
 const HUE_BINS = 24;
 const hueBin = (a, b) => { const h = Math.atan2(b, a); return ((Math.floor(((h + Math.PI) / (2 * Math.PI)) * HUE_BINS) % HUE_BINS) + HUE_BINS) % HUE_BINS; };
 const binDist = (p, q) => { const d = Math.abs(p - q) % HUE_BINS; return Math.min(d, HUE_BINS - d); };
 
-// Finds the color(s) of colored bands: pixels in the mouth that are clearly more colorful than
-// teeth and different from the lips, grouped by hue. Returns up to four candidate Lab colors,
-// strongest first; detectBands() decides which of them are really bands.
+// Lips, gums and skin share a band of red-orange hues. A pixel in that hue range only counts as a
+// possible band when it is clearly more saturated than the lips.
+const SKIN_SECTOR = Math.PI * 35 / 180;
+function looksLikeGum(st, a, b) {
+  const lipHue = st.lip ? Math.atan2(st.lip.b, st.lip.a) : 0.55, lipC = st.lip ? Math.hypot(st.lip.a, st.lip.b) : 25;
+  let d = Math.abs(Math.atan2(b, a) - lipHue);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d < SKIN_SECTOR && Math.hypot(a, b) < lipC * 1.3 + 6;
+}
+
+// Stained or warm-toned teeth look like pale yellow. A pixel near the teeth's own hue only counts
+// as a possible band when it is much more saturated than the teeth.
+function looksLikeTooth(st, a, b) {
+  const tC = Math.hypot(st.teeth.a, st.teeth.b), C = Math.hypot(a, b);
+  if (Math.hypot(a - st.teeth.a, b - st.teeth.b) < 11) return true;
+  if (tC < 4) return false;
+  let d = Math.abs(Math.atan2(b, a) - Math.atan2(st.teeth.b, st.teeth.a));
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return d < Math.PI / 6 && C < tC * 1.5 + 22;
+}
+
+// A pixel that is clearly not teeth, lips/gums, bare metal or shadow.
+function isColorful(r, st, i) {
+  const L = r.L[i], a = r.A[i], b = r.B[i];
+  if (L < 20 || Math.hypot(a, b) < 8 || looksLikeGum(st, a, b)) return false;
+  if (looksLikeTooth(st, a, b)) return false;
+  if (st.lip && dist(L, a, b, st.lip) < 12) return false;
+  if (st.dark && dist(L, a, b, st.dark) < 10) return false;
+  return true;
+}
+
+// Candidate band colors: colorful pixels in the mouth opening, grouped by hue.
+// Returns up to four Lab colors, strongest first; detectBands() decides which are really bands.
 // Clear, white, gray and black bands are not colorful enough to separate this way.
 export function autoDetectRefs(r, st) {
-  const minC = Math.max(16, st.teethC + 12), cands = [];
-  for (let i = 0; i < r.L.length; i++) {
-    if (!r.inside[i] || r.L[i] < 16) continue;
-    const C = Math.hypot(r.A[i], r.B[i]);
-    if (C < minC) continue;
-    if (st.lip) {
-      const dLip = Math.hypot((r.L[i] - st.lip.L) * 0.5, r.A[i] - st.lip.a, r.B[i] - st.lip.b);
-      if (dLip < 20 && C < st.lipC * 1.35 + 8) continue;
-    }
-    cands.push(i);
-  }
-  const minCount = Math.max(12, (r.mouthW * 0.02) ** 2 * 2);
+  const cands = [];
+  for (let i = 0; i < r.L.length; i++) if (r.core[i] && isColorful(r, st, i)) cands.push(i);
+  const minCount = Math.max(8, (r.mouthW * 0.015) ** 2 * 3);
   if (cands.length < minCount) return [];
   const hist = new Float32Array(HUE_BINS), bins = new Uint8Array(cands.length);
-  cands.forEach((i, k) => { bins[k] = hueBin(r.A[i], r.B[i]); hist[bins[k]] += Math.hypot(r.A[i], r.B[i]); });
+  cands.forEach((i, k) => { bins[k] = hueBin(r.A[i], r.B[i]); hist[bins[k]] += Math.hypot(r.A[i] - st.teeth.a, r.B[i] - st.teeth.b); });
   const smooth = p => hist[(p + HUE_BINS - 1) % HUE_BINS] + hist[p] + hist[(p + 1) % HUE_BINS];
   const refs = [], peaks = [];
   let firstWeight = 0;
-  for (let round = 0; round < 4; round++) {
+  for (let round = 0; round < 5; round++) {
     let best = -1, bestW = 0;
     for (let p = 0; p < HUE_BINS; p++) {
       if (peaks.some(q => binDist(p, q) < 3)) continue;
       const w = smooth(p);
       if (w > bestW) { bestW = w; best = p; }
     }
-    if (best < 0 || (round > 0 && bestW < firstWeight * 0.1)) break;
+    if (best < 0 || (round > 0 && bestW < firstWeight * 0.03)) break;
     if (round === 0) firstWeight = bestW;
     peaks.push(best);
     const sel = cands.filter((_, k) => binDist(bins[k], best) <= 1);
@@ -151,7 +181,10 @@ export function autoDetectRefs(r, st) {
   return refs;
 }
 
-export const isNeutral = ref => Math.hypot(ref.a, ref.b) < 12;
+export const isNeutral = ref => Math.hypot(ref.a, ref.b) < 8;
+
+// A tapped band color too close to gums, lips or teeth to match safely by color.
+export const isConfusable = (st, ref) => looksLikeGum(st, ref.a, ref.b) || looksLikeTooth(st, ref.a, ref.b);
 
 // Average Lab color in a small disc around (x, y) in image coordinates.
 export function sampleLab(r, x, y, radius) {
@@ -169,48 +202,87 @@ export function isInside(r, x, y) {
   return i >= 0 && j >= 0 && i < r.w && j < r.h && r.inside[j * r.w + i] === 1;
 }
 
-// Marks mouth pixels close to any reference color, then keeps only band-sized blobs.
-export function matchMask(r, refs, tol) {
-  const { w, h } = r, m = new Uint8Array(w * h);
+const BASE_TOL = 18;
+
+// Marks mouth pixels that are closer to a band color than to teeth, lips, shadow or bare metal,
+// then keeps only band-sized blobs. scale (about 0.4-1.7) loosens or tightens the match.
+// strict (automatic detection) also rules out gum-like and tooth-like colors; when the person
+// tapped a band themselves we trust that color instead.
+export function matchMask(r, refs, st, scale = 1, strict = false) {
+  const { w, h } = r, m = new Uint8Array(w * h), tol = BASE_TOL * scale;
   for (let i = 0; i < m.length; i++) {
-    if (!r.inside[i]) continue;
-    for (const ref of refs) {
-      if (Math.hypot((r.L[i] - ref.L) * 0.5, r.A[i] - ref.a, r.B[i] - ref.b) < tol) { m[i] = 1; break; }
-    }
+    if (!r.core[i]) continue;
+    const L = r.L[i], a = r.A[i], b = r.B[i];
+    let best = Infinity;
+    for (const ref of refs) best = Math.min(best, dist(L, a, b, ref));
+    if (best >= tol) continue;
+    if (best >= dist(L, a, b, st.teeth) || best >= Math.hypot(a, b) * 1.1) continue;
+    if (strict && (looksLikeGum(st, a, b) || looksLikeTooth(st, a, b))) continue;
+    if (st.lip && best >= dist(L, a, b, st.lip)) continue;
+    if (st.dark && best >= dist(L, a, b, st.dark)) continue;
+    m[i] = 1;
   }
-  const minA = Math.max(4, (r.mouthW * 0.012) ** 2), maxA = r.mouthW * r.mouthW * 0.03;
+  const minA = Math.max(3, (r.mouthW * 0.01) ** 2), maxA = r.mouthW * r.mouthW * 0.02;
+  const depth = edgeDepth(r), deep = Math.max(1.5, r.mouthW * 0.025);
   const seen = new Uint8Array(w * h), stack = [], comp = [];
-  let count = 0, kept = 0, total = 0;
+  let count = 0, kept = 0, total = 0, minX = Infinity, maxX = -Infinity;
   for (let s = 0; s < m.length; s++) {
     if (!m[s] || seen[s]) continue;
     comp.length = 0; stack.push(s); seen[s] = 1;
+    let sx = 0, nDeep = 0;
     while (stack.length) {
       const p = stack.pop(), x = p % w, y = (p - x) / w;
-      comp.push(p);
+      comp.push(p); sx += x; if (depth[p] >= deep) nDeep++;
       if (x > 0 && m[p - 1] && !seen[p - 1]) { seen[p - 1] = 1; stack.push(p - 1); }
       if (x < w - 1 && m[p + 1] && !seen[p + 1]) { seen[p + 1] = 1; stack.push(p + 1); }
       if (y > 0 && m[p - w] && !seen[p - w]) { seen[p - w] = 1; stack.push(p - w); }
       if (y < h - 1 && m[p + w] && !seen[p + w]) { seen[p + w] = 1; stack.push(p + w); }
     }
     total += comp.length;
-    if (comp.length < minA || comp.length > maxA) for (const p of comp) m[p] = 0;
-    else { count++; kept += comp.length; }
+    // Too small, too big, or hugging the lip edge (gums, lip shine): not a band.
+    if (comp.length < minA || comp.length > maxA || nDeep < comp.length * 0.3) { for (const p of comp) m[p] = 0; continue; }
+    count++; kept += comp.length;
+    const cx = sx / comp.length; minX = Math.min(minX, cx); maxX = Math.max(maxX, cx);
   }
-  return { mask: m, count, kept, total };
+  return { mask: m, count, kept, total, spread: count ? maxX - minX : 0 };
 }
 
-// Picks the candidate colors that look like bands: several separate band-sized spots rather
-// than one big area (tongue, gums, lips). Combines up to two colors for alternating bands.
-export function detectBands(r, st, tol) {
+// Distance (in pixels, approximate) from each mouth-opening pixel to the lip edge.
+function edgeDepth(r) {
+  if (r.depth) return r.depth;
+  const { w, h } = r, d = new Float32Array(w * h), D = 1, E = 1.41;
+  for (let i = 0; i < d.length; i++) d[i] = r.core[i] ? 1e6 : 0;
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const p = j * w + i; if (!d[p]) continue;
+    let v = d[p];
+    if (i > 0) v = Math.min(v, d[p - 1] + D); else v = Math.min(v, D);
+    if (j > 0) { v = Math.min(v, d[p - w] + D); if (i > 0) v = Math.min(v, d[p - w - 1] + E); if (i < w - 1) v = Math.min(v, d[p - w + 1] + E); } else v = Math.min(v, D);
+    d[p] = v;
+  }
+  for (let j = h - 1; j >= 0; j--) for (let i = w - 1; i >= 0; i--) {
+    const p = j * w + i; if (!d[p]) continue;
+    let v = d[p];
+    if (i < w - 1) v = Math.min(v, d[p + 1] + D); else v = Math.min(v, D);
+    if (j < h - 1) { v = Math.min(v, d[p + w] + D); if (i < w - 1) v = Math.min(v, d[p + w + 1] + E); if (i > 0) v = Math.min(v, d[p + w - 1] + E); } else v = Math.min(v, D);
+    d[p] = v;
+  }
+  r.depth = d;
+  return d;
+}
+
+// Picks the candidate colors that look like bands: several separate band-sized spots spread
+// across the smile, rather than one big area (tongue, gums, lips, mouth corners).
+// Combines up to two colors for alternating bands.
+export function detectBands(r, st, scale = 1) {
   const good = [];
   for (const ref of autoDetectRefs(r, st)) {
-    const res = matchMask(r, [ref], tol);
-    if (res.count >= 2 && res.kept >= res.total * 0.4) good.push({ ref, score: res.kept });
+    const res = matchMask(r, [ref], st, scale, true);
+    if (res.count >= 3 && res.kept >= res.total * 0.5 && res.spread >= r.mouthW * 0.25) good.push({ ref, score: res.kept });
   }
   if (!good.length) return null;
   good.sort((p, q) => q.score - p.score);
-  const refs = good.slice(0, 2).filter((g, i) => i === 0 || g.score >= good[0].score * 0.3).map(g => g.ref);
-  return { refs, ...matchMask(r, refs, tol) };
+  const refs = good.slice(0, 2).filter((g, i) => i === 0 || g.score >= good[0].score * 0.25).map(g => g.ref);
+  return { refs, strict: true, ...matchMask(r, refs, st, scale, true) };
 }
 
 // Combines the automatic mask with the person's taps. "add" paints a band-shaped ring

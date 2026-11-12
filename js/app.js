@@ -1,4 +1,4 @@
-import { hexToLab, buildRegion, regionStats, detectBands, matchMask, composeAlpha, recolor, sampleLab, isInside, isNeutral, drawArch } from './braces.js';
+import { hexToLab, buildRegion, regionStats, detectBands, matchMask, composeAlpha, recolor, sampleLab, isInside, isNeutral, isConfusable, drawArch } from './braces.js';
 import { geometryFromLandmarks, fallbackGeometry, sampleGeometry, bracePositions } from './geometry.js';
 import { preloadFaceFinder, findLandmarks } from './face.js';
 
@@ -8,7 +8,7 @@ const SAMPLE_CURRENT = colors.find(c => c.name === 'Royal Blue');
 const SAMPLE_SCALE = 2;
 const MAX_SIDE = 1280;
 const EXPIRY_MS = 2 * 60 * 60 * 1000;
-const DEFAULT_TOL = 24;
+const DEFAULT_TOL = 24; // slider position; match strength = value / 24
 
 const $ = id => document.getElementById(id);
 const stage = $('stage'), view = $('view'), video = $('video');
@@ -162,8 +162,8 @@ function analyze() {
     setStatus('We couldn’t find a smile in this photo. Try a closer, well-lit photo with your teeth and braces showing.');
     return;
   }
-  const found = detectBands(p.region, p.stats, p.tol);
-  if (found) { p.refs = found.refs; p.mask = found.mask; }
+  const found = detectBands(p.region, p.stats, p.tol / DEFAULT_TOL);
+  if (found) { p.refs = found.refs; p.mask = found.mask; p.strict = true; }
   p.maskVersion++;
   state.tool = 'match';
   if (p.mask) setStatus(`${p.kind === 'sample' ? 'This sample has blue bands. ' : ''}We found your current bands. Tap a color to try it. Missed a band? Use the tools below.`);
@@ -267,13 +267,18 @@ function handleTap(x, y) {
   if (state.tool === 'match') {
     const ref = sampleLab(region, x, y, Math.max(1.5, region.mouthW * 0.008));
     if (!ref) return;
-    if (isNeutral(ref) || ref.L < 22) {
+    if (isNeutral(ref) || ref.L < 20) {
       state.tool = 'add'; updateControls();
       showToast('That color blends in with teeth and shadows. Tap each band to mark it instead.');
       return;
     }
-    const { mask, count } = matchMask(region, [ref], p.tol);
-    p.refs = [ref]; p.mask = mask; p.maskVersion++;
+    if (isConfusable(p.stats, ref)) {
+      state.tool = 'add'; updateControls();
+      showToast('That color is very close to your gums, lips or teeth, so matching it could spill over. Tap each band to mark it instead.');
+      return;
+    }
+    const { mask, count } = matchMask(region, [ref], p.stats, p.tol / DEFAULT_TOL);
+    p.refs = [ref]; p.mask = mask; p.strict = false; p.maskVersion++;
     setStatus(count ? 'Matched your band color. Missed or extra spots? Use Add band or Remove.' : 'No bands matched that color. Try a looser match, or use Add band.');
   } else {
     p.edits.push({ type: state.tool === 'add' ? 'add' : 'remove', x, y, r: region.mouthW * 0.05 });
@@ -372,7 +377,7 @@ $('tolerance').addEventListener('change', event => {
   const p = state.photo;
   if (!p?.region || !p.refs.length) return;
   p.tol = Number(event.target.value);
-  p.mask = matchMask(p.region, p.refs, p.tol).mask; p.maskVersion++;
+  p.mask = matchMask(p.region, p.refs, p.stats, p.tol / DEFAULT_TOL, p.strict).mask; p.maskVersion++;
   render();
 });
 $('position').addEventListener('input', event => { state.offset = Number(event.target.value); render(); });

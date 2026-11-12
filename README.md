@@ -39,7 +39,9 @@ Start with a direct sponsorship or clearly disclosed affiliate link rather than 
 ## Privacy and limitations
 
 - Face detection runs on the device. The MediaPipe runtime tries to send anonymous usage statistics to Google; the page's Content-Security-Policy (`connect-src 'self'`) blocks that and every other outside request. Keep that policy when editing `index.html`.
-- Automatic band detection works for colored bands. Clear, white, silver, gray and black bands blend in with teeth, metal and shadows, so for those the person marks bands with *Add band*. Detection thresholds were tuned on test images and still need tuning on real braces photos in varied lighting and skin tones.
+- Automatic band detection works best for clearly colored bands (blue, green, purple, teal). Clear, white, silver, gray and black bands blend in with teeth, metal and shadows, and pink/red bands can match the gums; for those the app asks the person to mark bands with *Add band*. It is tuned to prefer missing a band over coloring gums, lips or teeth.
+- The app needs the whole face in the photo to find the mouth (close-ups of only the mouth are not recognized).
+- To check detection on more photos: put them in `test-photos/` (git-ignored) and run `node scripts/eval-bands.js test-photos eval-out` while `npm start` is running.
 - Small or distant photos give rough results; a close, well-lit smile works best. Only upper-arch brackets are drawn in new-patient mode.
 - Under this security policy, WebAssembly (used by face detection) needs iOS 16 or later and a current Android System WebView; on older devices the app still works but without automatic mouth detection.
 
